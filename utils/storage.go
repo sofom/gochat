@@ -27,12 +27,25 @@ type User struct {
 }
 
 type Chat struct {
-	ID      primitive.ObjectID   `bson:"_id" json:"id,omitempty"`
-	Name    string               `bson:"name" json:"name,omitempty"`
-	Members []primitive.ObjectID `bson:"members" json:"members"`
+	ID    primitive.ObjectID   `bson:"_id" json:"id,omitempty"`
+	Name  string               `bson:"name" json:"name,omitempty"`
+	Users []primitive.ObjectID `bson:"users" json:"users"`
 }
 
 var client *mongo.Client
+
+func SetupDBConnection() *mongo.Client {
+	clientOptions := options.Client().ApplyURI("mongodb://localhost:27017")
+	var err error
+
+	client, err = mongo.Connect(context.TODO(), clientOptions)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Print("DB connection established")
+	return client
+}
 
 func GetUser(UserID primitive.ObjectID) (user User, err error) {
 	filter := bson.M{"_id": UserID}
@@ -71,7 +84,7 @@ func GetChat(ChatID string) (chat Chat, err error) {
 }
 
 func GetChatByUsers(users []primitive.ObjectID) (chat Chat, err error) {
-	filter := bson.M{"members": bson.D{{"$all", users}}}
+	filter := bson.M{"users": bson.D{{"$all", users}}}
 
 	collection := client.Database("chat").Collection("chats")
 	err = collection.FindOne(context.TODO(), filter).Decode(&chat)
@@ -114,17 +127,15 @@ func (c *Chat) Messages() ([]Message, error) {
 	return messageList, err
 }
 
-func (c *Chat) AddMembers(userIDs []primitive.ObjectID) error {
+func (c *Chat) AddUsers(userIDs []primitive.ObjectID) error {
 	_, err := checkUsers(userIDs)
 	if err != nil {
 		return err
 	}
 
 	update := bson.D{
-		{"$addToSet", bson.D{
-			{"members", bson.D{
-				{"$each", userIDs}},
-			},
+		{"$set", bson.D{
+			{"users", userIDs},
 		}},
 	}
 	collection := client.Database("chat").Collection("chats")
@@ -133,7 +144,7 @@ func (c *Chat) AddMembers(userIDs []primitive.ObjectID) error {
 	if updateErr != nil {
 		return updateErr
 	}
-	c.Members = append(userIDs)
+	c.Users = append(userIDs)
 	return nil
 }
 
@@ -158,15 +169,40 @@ func (m Message) Create() error {
 	return err
 }
 
-func SetupDBConnection() *mongo.Client {
-	clientOptions := options.Client().ApplyURI("mongodb://localhost:27017")
-	var err error
+func getChatList(users []primitive.ObjectID, chatType string) ([]Chat, error) {
+	var chatList []Chat
+	filter := bson.M{}
+	findOptions := options.Find()
+	findOptions.SetLimit(20)
 
-	client, err = mongo.Connect(context.TODO(), clientOptions)
-	if err != nil {
-		log.Fatal(err)
+	if chatType == "private" {
+		filter["name"] = "private"
 	}
 
-	log.Print("DB connection established")
-	return client
+	if chatType == "group" {
+		filter["name"] = bson.M{"$ne": "private"}
+	}
+
+	if users != nil {
+		filter["users"] = bson.M{"$in": users}
+	}
+
+	ctx := context.TODO()
+	collection := client.Database("chat").Collection("chats")
+	cur, err := collection.Find(ctx, filter, findOptions)
+	defer cur.Close(ctx)
+	for cur.Next(ctx) {
+		var chat Chat
+		err := cur.Decode(&chat)
+		if err != nil {
+			err = &ServerError{Payload: err.Error()}
+		}
+
+		chatList = append(chatList, chat)
+	}
+	if err := cur.Err(); err != nil {
+		err = &ServerError{Payload: err.Error()}
+	}
+
+	return chatList, err
 }

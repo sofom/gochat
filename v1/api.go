@@ -6,6 +6,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 
@@ -34,14 +35,14 @@ func AddNewUser(w http.ResponseWriter, r *http.Request) {
 	var user utils.User
 
 	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
-		respondWithError(w, &utils.ServerError{Payload: "Invalid request Payload", StatusCode: http.StatusBadRequest})
+		respondWithError(w, errors.New("Invalid request Payload"))
 		return
 	}
 	defer r.Body.Close()
 
 	err := user.Create()
 	if err != nil {
-		respondWithJSON(w, http.StatusInternalServerError, err)
+		respondWithError(w, err)
 		log.Print(err)
 		return
 	}
@@ -52,14 +53,14 @@ func CreateChat(w http.ResponseWriter, r *http.Request) {
 	var chat utils.Chat
 
 	if err := json.NewDecoder(r.Body).Decode(&chat); err != nil {
-		respondWithError(w, &utils.ServerError{Payload: "Invalid request Payload", StatusCode: http.StatusBadRequest})
+		respondWithError(w, errors.New("Invalid request Payload"))
 		return
 	}
 	defer r.Body.Close()
 
 	err := utils.CreateChat(&chat)
 	if err != nil {
-		respondWithJSON(w, http.StatusInternalServerError, err)
+		respondWithError(w, err)
 		log.Print(err)
 		return
 	}
@@ -67,6 +68,32 @@ func CreateChat(w http.ResponseWriter, r *http.Request) {
 }
 
 func ChatList(w http.ResponseWriter, r *http.Request) {
+	var users []primitive.ObjectID
+	userIDQueryParam := r.FormValue("user")
+	if userIDQueryParam != "" {
+		userID, err := primitive.ObjectIDFromHex(userIDQueryParam)
+		if err != nil {
+			respondWithError(w, err)
+			return
+		}
+		users = append(users, userID)
+	}
+
+	chatType := r.FormValue("type")
+	if chatType != "" && chatType != "private" && chatType != "group" {
+		respondWithError(w, errors.New("Invalid query param `type` value"))
+		return
+	}
+
+	chats, err := utils.GetChatList(users, chatType)
+	if err != nil {
+		respondWithError(w, err)
+		return
+	}
+	respondWithJSON(w, http.StatusOK, chats)
+}
+
+func ChatMessages(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	messages, err := utils.GetChatMessages(vars["id"])
 	if err != nil {
@@ -90,7 +117,7 @@ func SendMessage(w http.ResponseWriter, r *http.Request) {
 	var message utils.Message
 
 	if err := json.NewDecoder(r.Body).Decode(&message); err != nil {
-		respondWithJSON(w, http.StatusBadRequest, "Invalid request Payload")
+		respondWithError(w, errors.New("Invalid request Payload"))
 		return
 	}
 	defer r.Body.Close()
@@ -103,7 +130,7 @@ func SendMessage(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, http.StatusOK, message)
 }
 
-func ChatMembers(w http.ResponseWriter, r *http.Request) {
+func ChatUsers(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	chat, err := utils.GetChat(vars["id"])
 	if err != nil {
@@ -111,16 +138,16 @@ func ChatMembers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var members []utils.User
-	for _, UserID := range chat.Members {
+	var users []utils.User
+	for _, UserID := range chat.Users {
 		user, _ := utils.GetUser(UserID)
-		members = append(members, user)
+		users = append(users, user)
 	}
 
-	respondWithJSON(w, http.StatusOK, members)
+	respondWithJSON(w, http.StatusOK, users)
 }
 
-func AddChatMembers(w http.ResponseWriter, r *http.Request) {
+func UpdateChatUsers(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	chat, err := utils.GetChat(vars["id"])
 	if err != nil {
@@ -140,7 +167,12 @@ func AddChatMembers(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	err = chat.AddMembers(users.IDs)
+	if len(users.IDs) < 2 {
+		respondWithError(w, errors.New("Invalid request Payload. Min number of chat users is 2"))
+		return
+	}
+
+	err = chat.AddUsers(users.IDs)
 	if err != nil {
 		respondWithError(w, err)
 		return
@@ -153,11 +185,12 @@ func Handlers(router *mux.Router) {
 
 	router.HandleFunc("/chats", CreateChat).Methods("POST")
 
-	router.HandleFunc("/chats/{id}", ChatList).Methods("GET")
-	router.HandleFunc("/chats/{id}", DeleteChat).Methods("DELETE")
+	router.HandleFunc("/chats", ChatList).Methods("GET")
+	router.HandleFunc("/chats/{id:[0-9a-z]+}", DeleteChat).Methods("DELETE")
 
+	router.HandleFunc("/chats/{id}/messages", ChatMessages).Methods("GET")
 	router.HandleFunc("/chats/messages", SendMessage).Methods("POST")
 
-	router.HandleFunc("/chats/{id}/users", ChatMembers).Methods("GET")
-	router.HandleFunc("/chats/{id}/users", AddChatMembers).Methods("POST")
+	router.HandleFunc("/chats/{id}/users", ChatUsers).Methods("GET")
+	router.HandleFunc("/chats/{id}/users", UpdateChatUsers).Methods("POST")
 }

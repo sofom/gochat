@@ -2,7 +2,7 @@ package utils
 
 /*
 	Rest API for chat V1
-	POST /users -- add new user
++	POST /users -- add new user
 +	POST /chats -- create a chat for users
 
 +	POST /chats/messages -- send a message
@@ -11,9 +11,7 @@ package utils
 	DELETE /chats/<chat_id> -- remove the chat
 
 +	GET /chats/<chat_id>/users -- list of the chat members
-
-	POST /chats/<chat_id>/users -- add users to the chat memebrs list
-	DELETE /chats/<chat_id>/users/<user_id> -- remove the user from the chat memebrs list
+	POST /chats/<chat_id>/users -- update the chat memebrs list
 */
 
 import (
@@ -50,12 +48,12 @@ func checkUsers(userIDs []primitive.ObjectID) ([]User, error) {
 }
 
 func CreateChat(chat *Chat) error {
-	_, err := checkUsers(chat.Members)
+	_, err := checkUsers(chat.Users)
 	if err != nil {
 		return err
 	}
 
-	_, chatErr := GetChatByUsers(chat.Members)
+	_, chatErr := GetChatByUsers(chat.Users)
 	if chatErr == nil {
 		return errors.New("Chat is already exists")
 	}
@@ -91,4 +89,12 @@ func AddChatMessage(newMessage Message) error {
 	newMessage.ChatID = chat.ID
 	err = newMessage.Create()
 	return err
+}
+
+func GetChatList(users []primitive.ObjectID, chatType string) ([]Chat, error) {
+	_, err := checkUsers(users)
+	if err != nil {
+		return nil, err
+	}
+	return getChatList(users, chatType)
 }
