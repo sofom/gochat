@@ -3,16 +3,16 @@ package utils
 /*
 	Rest API for chat V1
 	POST /users -- add new user
-	POST /chats -- create a chat for users
++	POST /chats -- create a chat for users
 
-	POST /chats/messages -- send a message
++	POST /chats/messages -- send a message
 
-	GET /chats/<chat_id> -- []Messages from chat history
++	GET /chats/<chat_id> -- []Messages from chat history
 	DELETE /chats/<chat_id> -- remove the chat
 
-	GET /chats/<chat_id>/users -- list of the chat members
++	GET /chats/<chat_id>/users -- list of the chat members
 
-	POST /chats/<chat_id>/users/<user_id> -- add the user to the chat memebrs list
+	POST /chats/<chat_id>/users -- add users to the chat memebrs list
 	DELETE /chats/<chat_id>/users/<user_id> -- remove the user from the chat memebrs list
 */
 
@@ -26,11 +26,11 @@ import (
 
 type ServerError struct {
 	StatusCode int
-	payload    string
+	Payload    string
 }
 
 func (e *ServerError) Error() string {
-	return e.payload
+	return e.Payload
 }
 
 func checkUsers(userIDs []primitive.ObjectID) ([]User, error) {
@@ -40,7 +40,7 @@ func checkUsers(userIDs []primitive.ObjectID) ([]User, error) {
 		user, senderErr := GetUser(userID)
 		if senderErr != nil {
 			err := ServerError{StatusCode: http.StatusNotFound}
-			err.payload = fmt.Sprintf("User with UserID %v not found", userID)
+			err.Payload = fmt.Sprintf("User with UserID %v not found", userID)
 			return nil, &err
 		}
 		usersList = append(usersList, user)
@@ -55,7 +55,7 @@ func CreateChat(chat *Chat) error {
 		return err
 	}
 
-	_, chatErr := GetChat(chat.Members)
+	_, chatErr := GetChatByUsers(chat.Members)
 	if chatErr == nil {
 		return errors.New("Chat is already exists")
 	}
@@ -67,18 +67,28 @@ func CreateChat(chat *Chat) error {
 	return nil
 }
 
-func GetChatMessages(UserID string) ([]Message, error) {
-	list := make([]Message, 2)
-	err := ServerError{StatusCode: http.StatusNotFound, payload: "Chat history is not found"}
-	return list, &err
+func GetChatMessages(ChatID string) ([]Message, error) {
+	chat, err := GetChat(ChatID)
+	if err != nil {
+		return nil, err
+	}
+
+	messages, err := chat.Messages()
+	return messages, err
 }
 
 func AddChatMessage(newMessage Message) error {
-	_, err := checkUsers([]primitive.ObjectID{newMessage.SenderID, newMessage.receiveID})
+	users := []primitive.ObjectID{newMessage.SenderID, newMessage.ReceiverID}
+	_, err := checkUsers(users)
 	if err != nil {
 		return err
 	}
 
+	chat, chatErr := GetChatByUsers(users)
+	if chatErr != nil {
+		return chatErr
+	}
+	newMessage.ChatID = chat.ID
 	err = newMessage.Create()
 	return err
 }
